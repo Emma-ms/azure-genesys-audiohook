@@ -266,21 +266,19 @@ class AzureAISpeechProvider(SpeechProvider):
             loop,
         )
 
-        async def _assist():
+        async def _assist(end:str):
             speech_session = cast(AzureAISpeechSession, ws_session.speech_session)
             if speech_session.assist:
                 summary = await speech_session.assist.on_transcription(text)
-
                 if summary:
-                    # print(f"summary: {summary}")
                     summaryItem = SummaryItem(
-                        text=summary,
+                        text=summary.content,
                         transcription_end=end,
                     )
-
                     await self.conversations_store.append_summary( ws_session.conversation_id, summaryItem)
+             
 
-        asyncio.run_coroutine_threadsafe(_assist(), loop)
+        asyncio.run_coroutine_threadsafe(_assist(end), loop)
 
     def _on_session_stopped(
         self,
@@ -297,10 +295,9 @@ class AzureAISpeechProvider(SpeechProvider):
 
                 if summary:
                     summaryItem = SummaryItem(
-                        text=summary,
+                        text=summary.content,
                         transcription_end="end",
                     )
-                    # print(f"end summary: {summary}")
                     await self.conversations_store.append_summary( ws_session.conversation_id, summaryItem)
 
         asyncio.run_coroutine_threadsafe(_flush_summary(), loop)
