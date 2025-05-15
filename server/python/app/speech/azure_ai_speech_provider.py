@@ -7,11 +7,11 @@ from typing import Any, Awaitable, Callable, cast
 import azure.cognitiveservices.speech as speechsdk
 
 from ..enums import AzureGenesysEvent
-from ..models import AzureAISpeechSession, TranscriptItem, WebSocketSessionStorage
+from ..models import AzureAISpeechSession, TranscriptItem,SummaryItem, WebSocketSessionStorage
 from ..storage.base_conversation_store import ConversationStore
 from ..utils.identity import get_speech_token
 from .speech_provider import SpeechProvider
-
+from ..language.agent_assist import AgentAssistant
 
 class AzureAISpeechProvider(SpeechProvider):
     """Azure AI Speech implementation of SpeechProvider."""
@@ -48,7 +48,15 @@ class AzureAISpeechProvider(SpeechProvider):
             channels=len(media["channels"]),
             wave_stream_format=speechsdk.AudioStreamWaveFormat.MULAW,
         )
+
         stream = speechsdk.audio.PushAudioInputStream(stream_format=audio_format)
+        # Get the absolute path to the provider.py script's directory
+        provider_script_dir = os.path.dirname(os.path.abspath(__file__))
+
+        # Calculate the path to the config file based on the provider.py's directory
+        config_path = os.path.join(provider_script_dir, "../language/config.yaml")
+
+        assist = AgentAssistant(config_path)
 
         ws_session.speech_session = AzureAISpeechSession(
             audio_buffer=stream,
@@ -57,6 +65,7 @@ class AzureAISpeechProvider(SpeechProvider):
             recognize_task=asyncio.create_task(
                 self._recognize_speech(session_id, ws_session)
             ),
+            assist=assist,
         )
 
     async def handle_audio_frame(
@@ -185,7 +194,7 @@ class AzureAISpeechProvider(SpeechProvider):
         )
         recognizer.session_stopped.connect(
             lambda evt: loop.call_soon_threadsafe(
-                self._on_session_stopped, session_id, done_event, evt
+                self._on_session_stopped, session_id,ws_session,loop, done_event, evt
             )
         )
 
@@ -232,8 +241,9 @@ class AzureAISpeechProvider(SpeechProvider):
         start = f"PT{offset / 10_000_000:.2f}S"
         end = f"PT{(offset + duration) / 10_000_000:.2f}S"
 
-        channel = result.get("Channel") if is_multichannel else None
+        channel = result.get("Channel") if is_multichannel else 1
 
+        # print(f"channel: {channel}, text: {text}, start: {start}, end:{end}")
         item = TranscriptItem(
             channel=channel,
             text=text,
@@ -256,12 +266,42 @@ class AzureAISpeechProvider(SpeechProvider):
             loop,
         )
 
+        async def _assist(end:str):
+            speech_session = cast(AzureAISpeechSession, ws_session.speech_session)
+            if speech_session.assist:
+                summary = await speech_session.assist.on_transcription(text)
+                if summary:
+                    summaryItem = SummaryItem(
+                        text=summary.content,
+                        transcription_end=end,
+                    )
+                    await self.conversations_store.append_summary( ws_session.conversation_id, summaryItem)
+             
+
+        asyncio.run_coroutine_threadsafe(_assist(end), loop)
+
     def _on_session_stopped(
         self,
         session_id: str,
+        ws_session: WebSocketSessionStorage,
+        loop: asyncio.AbstractEventLoop,
         done_event: asyncio.Event,
         evt: speechsdk.SessionEventArgs,
     ) -> None:
+        async def _flush_summary():
+            speech_session = cast(AzureAISpeechSession, ws_session.speech_session)
+            if hasattr(speech_session, "assist") and speech_session.assist:
+                summary = await speech_session.assist.flush_summary()
+
+                if summary:
+                    summaryItem = SummaryItem(
+                        text=summary.content,
+                        transcription_end="end",
+                    )
+                    await self.conversations_store.append_summary( ws_session.conversation_id, summaryItem)
+
+        asyncio.run_coroutine_threadsafe(_flush_summary(), loop)
+
         """Signal that continuous recognition has finished."""
         self.logger.info(f"[{session_id}] Session stopped: {evt.session_id}")
         done_event.set()

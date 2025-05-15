@@ -1,0 +1,9 @@
+azure_openai_endpoint: <aoai-endpoint>
+azure_openai_key: <aoai-key>
+deployment_name: <deployment-name>
+# embedding_deployment: text-embedding-3-small
+# azure_search_endpoint: https://<your-search-service>.search.windows.net
+# azure_search_key: <your-search-key>
+# azure_search_index: <your-index-name>
+summary_threshold: 5
+summary_interval: 4
