@@ -1,0 +1,9 @@
+azure_openai_endpoint: https://enchenhubeastu2194725697.openai.azure.com
+azure_openai_key: Anpt1S7JWtEjawmUrgtvu79whgzRzTHMbo9jeaGgvR0RENJnMQH8JQQJ99AKACYeBjFXJ3w3AAAAACOGVfMK
+deployment_name: gpt-4o-mini
+# embedding_deployment: text-embedding-3-small
+# azure_search_endpoint: https://<your-search-service>.search.windows.net
+# azure_search_key: <your-search-key>
+# azure_search_index: <your-index-name>
+summary_threshold: 5
+summary_interval: 4

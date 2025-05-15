@@ -3,7 +3,7 @@ from typing import Any
 
 import azure.cognitiveservices.speech as speechsdk
 from pydantic import BaseModel, ConfigDict, Field
-
+from .language.agent_assist import AgentAssistant
 
 class MessageBase(BaseModel):
     version: str
@@ -29,6 +29,9 @@ class TranscriptItem(BaseModel):
     start: str | None = None  # ISO 8601 duration string, e.g., "PT1.23S"
     end: str | None = None  # ISO 8601 duration string, e.g., "PT1.23S"
 
+class SummaryItem(BaseModel):
+    text: str
+    transcription_end: str | None = None  # ISO 8601 duration string, e.g., "PT1.23S"
 
 class Conversation(BaseModel):
     """Pydantic model to store conversation details"""
@@ -45,6 +48,7 @@ class Conversation(BaseModel):
     position: str
     rtt: list[str] = Field(default_factory=list)
     transcript: list[TranscriptItem] = Field(default_factory=list)
+    summary: list[SummaryItem] = Field(default_factory=list)
 
 
 class WebSocketSessionStorage(BaseModel):
@@ -87,3 +91,4 @@ class AzureAISpeechSession(BaseModel):
     raw_audio: bytearray
     media: dict[str, Any]
     recognize_task: asyncio.Task
+    assist: AgentAssistant

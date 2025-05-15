@@ -1,4 +1,4 @@
-from ..models import Conversation, TranscriptItem
+from ..models import Conversation, TranscriptItem, SummaryItem
 from .base_conversation_store import ConversationStore
 
 
@@ -51,6 +51,12 @@ class InMemoryConversationStore(ConversationStore):
         conversation = await self.get(conversation_id)
         if conversation:
             conversation.transcript.append(item)
+            await self.set(conversation)
+
+    async def append_summary(self, conversation_id: str, item: SummaryItem):
+        conversation = await self.get(conversation_id)
+        if conversation:
+            conversation.summary.append(item)
             await self.set(conversation)
 
     async def close(self):
