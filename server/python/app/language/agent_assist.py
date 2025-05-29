@@ -42,7 +42,7 @@ class AgentAssistant():
         self.message_buffer.append(fragment)
 
         if len(self.message_buffer) < self.config['summary_interval']:
-            # print(f"current buffer size {len(self.message_buffer)}")
+            print(f"current buffer size {len(self.message_buffer)}")
             return None  # Not ready yet
 
         return await self.invoke_llm()
@@ -62,7 +62,7 @@ class AgentAssistant():
     async def invoke_llm(self) -> str | None:
         # Build user input
         user_input = "Transcriptions:\n" + ' '.join(self.message_buffer)
-        # print(f"input {user_input}")
+        print(f"input {user_input}")
         self.message_buffer.clear()
 
         self.reducer.add_user_message(user_input)
@@ -86,6 +86,6 @@ class AgentAssistant():
         )
         if response:
             self.reducer.add_message(response.value[0])
-            # print(f"response: {response.value[0]} \n")
+            print(f"response: {response.value[0]} \n")
             return response.value[0]
         return None
