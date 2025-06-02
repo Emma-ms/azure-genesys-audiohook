@@ -7,7 +7,7 @@ from typing import Any
 
 # Speech provider abstraction
 from azure.storage.blob.aio import BlobServiceClient
-from quart import Quart, request, websocket
+from quart import Quart, request, websocket, send_from_directory
 
 from .enums import (
     AzureGenesysEvent,
@@ -49,7 +49,7 @@ class WebsocketServer:
 
     def __init__(self):
         """Initialize the server"""
-        self.app = Quart(__name__)
+        self.app = Quart(__name__, static_folder='static')
         self.setup_routes()
         self.app.before_serving(self.create_connections)
         self.app.after_serving(self.close_connections)
@@ -70,6 +70,9 @@ class WebsocketServer:
             }, 401
 
         return wrapper
+    
+    async def serve_view(self):
+        return await send_from_directory(self.app.static_folder, "index.html")
 
     def setup_routes(self):
         """Setup the routes for the server"""
@@ -83,6 +86,8 @@ class WebsocketServer:
         )
 
         self.app.websocket("/audiohook/ws")(self.ws)
+
+        self.app.route("/viewconversations")(self.require_api_key(self.serve_view))
 
     async def create_connections(self):
         """Create connections before serving"""
@@ -127,6 +132,11 @@ class WebsocketServer:
                     raise RuntimeError(
                         "Azure OpenAI Speech configuration is required. Please set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_MODEL_DEPLOYMENT."
                     )
+            else:
+                raise RuntimeError(
+                    "No speech provider selected."
+                )
+        self.logger.info(f"Speech provider set: {self.speech_provider}")
 
     async def close_connections(self):
         """Close connections after serving"""

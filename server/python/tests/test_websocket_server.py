@@ -1,24 +1,35 @@
+import asyncio
+import logging
 import os
 
 import pytest
 from app.storage.in_memory_conversation_store import InMemoryConversationStore
 from app.websocket_server import WebsocketServer
+from dotenv import load_dotenv
 
-os.environ["WEBSOCKET_SERVER_API_KEY"] = "SGVsbG8sIEkgYW0gdGhlIEFQSSBrZXkh"
-os.environ["WEBSOCKET_SERVER_CLIENT_SECRET"] = (
-    "TXlTdXBlclNlY3JldEtleVRlbGxOby0xITJAMyM0JDU="
-)
+dotenv_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".env"))
+load_dotenv(dotenv_path)
 
+logging.basicConfig(level=logging.DEBUG)
+logging.getLogger().setLevel(logging.DEBUG)
 
 @pytest.fixture
-def app():
-    """Create a test client for the app. See https://quart.palletsprojects.com/en/latest/how_to_guides/testing.html#testing"""
+async def server():
     server = WebsocketServer()
-    # Inject in-memory conversation store for testing
     server.conversations_store = InMemoryConversationStore()
-    app = server.app.test_client()
-    return app
+    await server.create_connections()
+    yield server
+    await server.close_connections()
 
+@pytest.fixture
+async def app(server):
+    return server.app.test_client()
+
+@pytest.mark.asyncio
+async def test_server_fixture(server):
+    assert server.app is not None
+    assert hasattr(server.app, "test_client")
+    assert os.getenv("AZURE_SPEECH_REGION") is not None
 
 @pytest.mark.asyncio
 async def test_health_check(app):
@@ -50,7 +61,7 @@ async def test_invalid_route(app):
 
 
 @pytest.mark.asyncio
-async def test_ws_invalid_api_key(app):
+async def test_ws_invalid_api_key(server):
     """Test websocket connection with invalid API key"""
 
     headers = {
@@ -61,7 +72,7 @@ async def test_ws_invalid_api_key(app):
         "Signature": "test_signature",
     }
 
-    async with app.websocket("/audiohook/ws", headers=headers) as ws:
+    async with server.app.websocket("/audiohook/ws", headers=headers) as ws:
         response = await ws.receive_json()
 
         assert response["type"] == "disconnect"
@@ -127,3 +138,93 @@ async def test_ws_valid_connection(app):
         response = await ws.receive_json()
 
         assert response["type"] == "opened"
+
+@pytest.mark.asyncio
+async def test_ws_audio_processing(app):
+    """Test valid websocket connection"""
+    API_KEY= os.getenv("WEBSOCKET_SERVER_API_KEY")
+    CONVERSATION_ID = "090eaa2f-72fa-480a-83e0-8667ff89c0ec"
+    headers = {
+        "X-Api-Key": API_KEY,
+        "Audiohook-Session-Id": "e160e428-53e2-487c-977d-96989bf5c99d",
+        "Audiohook-Correlation-Id": "test_correlation",
+        "Signature-Input": "test_signature_input",
+        "Signature": "test_signature",
+    }
+    
+    async with app.websocket("/audiohook/ws", headers=headers) as ws:
+        await ws.send_json(
+            {
+                "version": "2",
+                "type": "open",
+                "seq": 1,
+                "serverseq": 0,
+                "id": "e160e428-53e2-487c-977d-96989bf5c99d",
+                "position": "PT0S",
+                "parameters": {
+                    "organizationId": "d7934305-0972-4844-938e-9060eef73d05",
+                    "conversationId": CONVERSATION_ID,
+                    "participant": {
+                        "id": "883efee8-3d6c-4537-b500-6d7ca4b92fa0",
+                        "ani": "+1-555-555-1234",
+                        "aniName": "John Doe",
+                        "dnis": "+1-800-555-6789",
+                    },
+                    "media": [
+                        {
+                            "type": "audio",
+                            "format": "PCMU",
+                            "channels": ["external", "internal"],
+                            "rate": 8000,
+                        },
+                        {
+                            "type": "audio",
+                            "format": "PCMU",
+                            "channels": ["external"],
+                            "rate": 8000,
+                        },
+                        {
+                            "type": "audio",
+                            "format": "PCMU",
+                            "channels": ["internal"],
+                            "rate": 8000,
+                        },
+                    ],
+                    "language": "en-US",
+                },
+            }
+        )
+
+        response = await ws.receive_json()
+
+        assert response["type"] == "opened"
+
+        # Read and send WAV file in chunks
+        file_path = os.path.join(os.path.dirname(__file__), "test.wav")
+        with open(file_path, "rb") as f:
+            while chunk := f.read(1024):
+                await ws.send(chunk)
+                await asyncio.sleep(0.01) 
+        try:
+            response = await asyncio.wait_for(ws.receive(), timeout=300)
+            logging.info("WebSocket response:", response)
+        except asyncio.TimeoutError:
+            logging.info("No response from websocket")
+
+        await asyncio.sleep(2)
+
+        # Optionally receive 'closed' response
+        try:
+            closed_response = await asyncio.wait_for(ws.receive_json(), timeout=3)
+            assert closed_response["type"] == "closed"
+        except asyncio.TimeoutError:
+            pass 
+
+        response = await app.get(
+            f"/api/conversation/{CONVERSATION_ID}",
+            headers={"X-Api-Key": API_KEY}
+        )
+        assert response.status_code == 200
+        conversations = await response.get_json()
+
+        logging.info("Conversations:", conversations)
