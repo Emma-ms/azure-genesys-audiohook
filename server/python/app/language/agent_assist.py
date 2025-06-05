@@ -1,4 +1,5 @@
 import asyncio
+import os
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
 from semantic_kernel.contents import ChatHistorySummarizationReducer
 from semantic_kernel.kernel import Kernel
@@ -14,7 +15,7 @@ class AgentAssistant():
         self.kernel = self.initialize_kernel()
         self.reducer = ChatHistorySummarizationReducer(
             service=self.kernel.get_service(service_id="chat-completion"),
-            target_count=self.config.get('summary_threshold', 5),
+            target_count=self.config.get('reducer_threshold', 5),
             auto_reduce=True
         )
         self.reducer.add_system_message("""You are an Agent Assist who receives transcription from both Agent and Customer.
@@ -27,13 +28,18 @@ class AgentAssistant():
         Do NOT suggest what the customer might say next.
         """)
         self.message_buffer = []
+
+        # Load configuration from environment
+        self.aoai_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+        self.aoai_deployment = os.getenv("AZURE_OPENAI_MODEL_DEPLOYMENT")
+        self.aoai_key = os.getenv("AZURE_OPENAI_KEY")
     
     def initialize_kernel(self):
         kernel = Kernel()
         kernel.add_service(AzureChatCompletion(
-            deployment_name=self.config['deployment_name'],  
-            api_key=self.config['azure_openai_key'],
-            endpoint=self.config['azure_openai_endpoint'],
+            deployment_name=self.aoai_deployment,  
+            api_key=self.aoai_key,
+            endpoint=self.aoai_endpoint,
             service_id="chat-completion"
         ))
         return kernel

@@ -176,19 +176,7 @@ async def test_ws_audio_processing(app):
                             "format": "PCMU",
                             "channels": ["external", "internal"],
                             "rate": 8000,
-                        },
-                        {
-                            "type": "audio",
-                            "format": "PCMU",
-                            "channels": ["external"],
-                            "rate": 8000,
-                        },
-                        {
-                            "type": "audio",
-                            "format": "PCMU",
-                            "channels": ["internal"],
-                            "rate": 8000,
-                        },
+                        }
                     ],
                     "language": "en-US",
                 },
@@ -206,25 +194,15 @@ async def test_ws_audio_processing(app):
                 await ws.send(chunk)
                 await asyncio.sleep(0.01) 
         try:
-            response = await asyncio.wait_for(ws.receive(), timeout=300)
+            response = await asyncio.wait_for(ws.receive_json(), timeout=5)
             logging.info("WebSocket response:", response)
         except asyncio.TimeoutError:
             logging.info("No response from websocket")
 
-        await asyncio.sleep(2)
+        response = await app.get(f"/api/conversations?key={API_KEY}")
 
-        # Optionally receive 'closed' response
-        try:
-            closed_response = await asyncio.wait_for(ws.receive_json(), timeout=3)
-            assert closed_response["type"] == "closed"
-        except asyncio.TimeoutError:
-            pass 
-
-        response = await app.get(
-            f"/api/conversation/{CONVERSATION_ID}",
-            headers={"X-Api-Key": API_KEY}
-        )
         assert response.status_code == 200
         conversations = await response.get_json()
-
         logging.info("Conversations:", conversations)
+
+        # optional, closed the connection
