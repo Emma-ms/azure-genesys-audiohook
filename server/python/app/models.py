@@ -56,6 +56,7 @@ class WebSocketSessionStorage(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
+    websocket: Any | None = None
     client_seq: int = 0
     server_seq: int = 0
     conversation_id: str | None = None
