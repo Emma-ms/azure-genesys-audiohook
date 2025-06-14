@@ -6,10 +6,11 @@ from typing import Any, Awaitable, Callable, cast
 
 import azure.cognitiveservices.speech as speechsdk
 
-from ..enums import AzureGenesysEvent
+from ..enums import AzureGenesysEvent, ServerMessageType
 from ..models import AzureAISpeechSession, TranscriptItem,SummaryItem, WebSocketSessionStorage
 from ..storage.base_conversation_store import ConversationStore
 from ..utils.identity import get_speech_token
+from ..utils.event_entity_builder import build_transcript_entity, build_agent_assist_entity, build_agent_assist_utterance
 from .speech_provider import SpeechProvider
 from ..language.agent_assist import AgentAssistant
 
@@ -22,10 +23,12 @@ class AzureAISpeechProvider(SpeechProvider):
         self,
         conversations_store: ConversationStore,
         send_event_callback: Callable[..., Awaitable[None]],
+        send_message_callback: Callable[..., Awaitable[None]],
         logger: logging.Logger,
     ) -> None:
         self.conversations_store = conversations_store
         self.send_event = send_event_callback
+        self.send_message = send_message_callback
         self.logger = logger
 
         # Load configuration from environment
@@ -238,17 +241,27 @@ class AzureAISpeechProvider(SpeechProvider):
 
         offset = result.get("Offset", 0)
         duration = result.get("Duration", 0)
-        start = f"PT{offset / 10_000_000:.2f}S"
+        start = f"PT{offset / 10_000_000:.2f}S" # convert 100ns ticks to seconds
         end = f"PT{(offset + duration) / 10_000_000:.2f}S"
+        confidence = 0.85  # Azure SDK does not provide exact confidence; this can be mocked or inferred
 
         channel = result.get("Channel") if is_multichannel else 1
 
-        # print(f"channel: {channel}, text: {text}, start: {start}, end:{end}")
+        print(f"recognized channel: {channel}, text: {text}, start: {start}, end:{end}")
         item = TranscriptItem(
             channel=channel,
             text=text,
             start=start,
             end=end,
+        )
+
+        transcript_entity = build_transcript_entity(
+            channel_id="CUSTOMER",  # or "AGENT" based on session metadata
+            transcript_text=text,
+            confidence=confidence,
+            is_final=True,
+            offset=offset,
+            duration=duration,
         )
 
         async def _update() -> None:
@@ -265,8 +278,17 @@ class AzureAISpeechProvider(SpeechProvider):
             ),
             loop,
         )
+        print(f"Sending event message to session_id={session_id}, websocket: {ws_session.websocket}")
+        asyncio.run_coroutine_threadsafe(
+            self.send_message(
+                type=ServerMessageType.EVENT,
+                client_message={"id": session_id},
+                parameters={"entities": transcript_entity}
+            ),
+            loop,
+        )
 
-        async def _assist(end:str):
+        async def _assist(offset, confidence, duration, end):
             speech_session = cast(AzureAISpeechSession, ws_session.speech_session)
             if speech_session.assist:
                 summary = await speech_session.assist.on_transcription(text)
@@ -276,9 +298,30 @@ class AzureAISpeechProvider(SpeechProvider):
                         transcription_end=end,
                     )
                     await self.conversations_store.append_summary( ws_session.conversation_id, summaryItem)
+
+                    utterance = build_agent_assist_utterance(
+                        position=offset,
+                        text=summary.content,
+                        language="en-US", # To be updated
+                        confidence=confidence,
+                        channel="CUSTOMER",
+                        is_final=True,
+                        duration=duration,
+                    )
+
+                    agent_assist_entity = build_agent_assist_entity(
+                        utterances=[utterance],
+                        suggestions=[]  # fill with FAQ/articles if available
+                    )
+
+                    self.send_message(
+                        type=ServerMessageType.EVENT,
+                        client_message={"sessionId": session_id},
+                        parameters={"entities": agent_assist_entity}
+                    )
              
 
-        asyncio.run_coroutine_threadsafe(_assist(end), loop)
+        asyncio.run_coroutine_threadsafe(_assist(offset, confidence, duration, end), loop)
 
     def _on_session_stopped(
         self,
@@ -299,6 +342,27 @@ class AzureAISpeechProvider(SpeechProvider):
                         transcription_end="end",
                     )
                     await self.conversations_store.append_summary( ws_session.conversation_id, summaryItem)
+
+                    utterance = build_agent_assist_utterance(
+                        position=0,
+                        text=summary.content,
+                        language="en-US", # To be updated
+                        confidence=0.85,
+                        channel="CUSTOMER",
+                        is_final=True,
+                        duration="PT1S",
+                    )
+
+                    agent_assist_entity = build_agent_assist_entity(
+                        utterances=[utterance],
+                        suggestions=[]  # fill with FAQ/articles if available
+                    )
+
+                    self.send_message(
+                        type=ServerMessageType.EVENT,
+                        client_message={"sessionId": session_id},
+                        parameters={"entities": agent_assist_entity}
+                    )
 
         asyncio.run_coroutine_threadsafe(_flush_summary(), loop)
 
